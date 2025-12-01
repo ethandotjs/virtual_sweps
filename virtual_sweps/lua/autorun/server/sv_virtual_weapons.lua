@@ -84,12 +84,20 @@ local WEAPON_STATE_BLACKLIST = {
     ReloadSpeedMult = true,
     nextIdle = true,
     VW_FastDeploy = true,
+    Mode = true,
+    ToolObj = true,
 }
 
 function VirtualWeapons:SaveWeaponState(ply, weapon)
     if not IsValid(weapon) then return end
 
     local weaponClass = weapon:GetClass()
+
+    -- tool gun doesn't play too nice
+    if weaponClass == "gmod_tool" then
+        return
+    end
+
     local state = {}
 
     state.clip1 = weapon:Clip1()
@@ -139,6 +147,13 @@ function VirtualWeapons:RestoreWeaponState(ply, weapon)
     if not IsValid(weapon) then return end
 
     local weaponClass = weapon:GetClass()
+
+    -- don't restore state for tool gun
+    if weaponClass == "gmod_tool" then
+        self.PlayerWeapons[ply].weaponData[weaponClass] = nil
+        return
+    end
+
     local state = self.PlayerWeapons[ply].weaponData[weaponClass]
 
     if not state then return end
@@ -222,8 +237,8 @@ function VirtualWeapons:RemoveWeapon(ply, weaponClass)
 
     if self.PlayerWeapons[ply].active == weaponClass then
         local weapon = ply:GetWeapon(weaponClass)
-        if IsValid(weapon) and weapon.Holster then
-            weapon:Holster()
+        if IsValid(weapon) and weapon.Holster and isfunction(weapon.Holster) then
+            pcall(weapon.Holster, weapon)
         end
 
         self.BypassStripHook = true
@@ -251,8 +266,8 @@ function VirtualWeapons:ClearAllWeapons(ply)
 
     if self.PlayerWeapons[ply].active then
         local weapon = ply:GetWeapon(self.PlayerWeapons[ply].active)
-        if IsValid(weapon) and weapon.Holster then
-            weapon:Holster()
+        if IsValid(weapon) and weapon.Holster and isfunction(weapon.Holster) then
+            pcall(weapon.Holster, weapon)
         end
 
         self.BypassStripHook = true
@@ -300,8 +315,8 @@ function VirtualWeapons:SwitchToWeapon(ply, weaponClass)
         if IsValid(currentWeapon) then
             self:SaveWeaponState(ply, currentWeapon)
 
-            if currentWeapon.Holster then
-                currentWeapon:Holster()
+            if currentWeapon.Holster and isfunction(currentWeapon.Holster) then
+                pcall(currentWeapon.Holster, currentWeapon)
             end
 
             self.BypassStripHook = true
@@ -313,8 +328,8 @@ function VirtualWeapons:SwitchToWeapon(ply, weaponClass)
         if IsValid(currentWeapon) then
             local currentClass = currentWeapon:GetClass()
 
-            if currentWeapon.Holster then
-                currentWeapon:Holster()
+            if currentWeapon.Holster and isfunction(currentWeapon.Holster) then
+                pcall(currentWeapon.Holster, currentWeapon)
             end
 
             self.BypassStripHook = true
