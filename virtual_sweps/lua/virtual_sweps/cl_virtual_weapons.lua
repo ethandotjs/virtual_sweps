@@ -21,7 +21,10 @@ local SWITCH_REQUEST_COOLDOWN = 0.05 -- client-side anti-spam
 function VirtualWeapons:RequestSwitch(weaponClass)
     -- rate limit NW requests
     local now = CurTime()
-    if now - lastSwitchRequest < SWITCH_REQUEST_COOLDOWN then return end
+    if (now - lastSwitchRequest < SWITCH_REQUEST_COOLDOWN) then
+        return
+    end
+
     lastSwitchRequest = now
 
     net.Start("VirtualWeapons_SwitchTo")
@@ -43,12 +46,27 @@ local col_text      = Color(200, 200, 200, 255)
 local col_text_sel  = Color(255, 255, 255, 255)
 
 hook.Add("HUDShouldDraw", "VirtualWeapons_HideDefault", function(name)
-    if name == "CHudWeaponSelection" then return false end
+    if (name == "CHudWeaponSelection") then return false end
+end)
+
+hook.Add("WeaponEquip", "VirtualWeapons_RebuildOnEquip", function(weapon, ply)
+    if (ply == LocalPlayer()) then
+        needsRebuild = true
+    end
+end)
+
+hook.Add("EntityRemoved", "VirtualWeapons_RebuildOnRemove", function(ent)
+    if (ent:IsWeapon() and IsValid(LocalPlayer())) then
+        local owner = ent:GetOwner()
+        if (owner == LocalPlayer()) then
+            needsRebuild = true
+        end
+    end
 end)
 
 local function WS_PlaySound()
     local ply = LocalPlayer()
-    if IsValid(ply) then
+    if (IsValid(ply)) then
         ply:EmitSound("common/wpn_moveselect.wav", 50, 100, 0.25)
     end
 end
@@ -82,7 +100,7 @@ local ENGINE_WEAPON_SLOTS = {
 
 local function WrapTextToWidth(text, font, maxWidth)
     text = tostring(text or "")
-    if text == "" then return {""}, 0, 0 end
+    if (text == "") then return {""}, 0, 0 end
 
     surface.SetFont(font)
     local lineHeight = draw.GetFontHeight(font)
@@ -95,13 +113,13 @@ local function WrapTextToWidth(text, font, maxWidth)
         local candidate = (line == "" and word) or (line .. " " .. word)
         local w = surface.GetTextSize(candidate)
 
-        if w > maxWidth then
-            if line ~= "" then
+        if (w > maxWidth) then
+            if (line != "") then
                 lines[#lines + 1] = line
                 line = word
             else
                 local cut = word
-                while #cut > 1 and surface.GetTextSize(cut .. "…") > maxWidth do
+                while (#cut > 1 and surface.GetTextSize(cut .. "…") > maxWidth) do
                     cut = string.sub(cut, 1, #cut - 1)
                 end
                 lines[#lines + 1] = cut .. "…"
@@ -112,7 +130,7 @@ local function WrapTextToWidth(text, font, maxWidth)
         end
     end
 
-    if line ~= "" then lines[#lines + 1] = line end
+    if (line != "") then lines[#lines + 1] = line end
     local totalHeight = #lines * lineHeight
     return lines, totalHeight, lineHeight
 end
@@ -123,19 +141,21 @@ local lastBuildTime = 0
 local BUILD_THROTTLE = 0.05 -- throttle rebuilds to 50ms
 
 local function BuildWeapons(ply)
-    if not IsValid(ply) then return cachedSlots, cachedFlat, cachedNonEmpty end
+    if (not IsValid(ply)) then return cachedSlots, cachedFlat, cachedNonEmpty end
 
     local virtualWeps = VirtualWeapons.ClientWeapons or {}
-    local wepCount = #virtualWeps
+
+    local realWeapons = ply:GetWeapons()
+    local totalWepCount = #virtualWeps + #realWeapons
 
     -- return cache if nothing changed
-    if wepCount == lastWeaponCount and not needsRebuild then
+    if (totalWepCount == lastWeaponCount and not needsRebuild) then
         return cachedSlots, cachedFlat, cachedNonEmpty
     end
 
-    -- throttle expensive rebuilds
+    -- throttle rebuilds
     local now = CurTime()
-    if needsRebuild and now - lastBuildTime < BUILD_THROTTLE then
+    if (needsRebuild and now - lastBuildTime < BUILD_THROTTLE) then
         return cachedSlots, cachedFlat, cachedNonEmpty
     end
     lastBuildTime = now
@@ -143,29 +163,51 @@ local function BuildWeapons(ply)
     table.Empty(cachedSlots)
     table.Empty(cachedFlat)
     table.Empty(cachedNonEmpty)
-    lastWeaponCount = wepCount
+    lastWeaponCount = totalWepCount
 
     local maxTextW = PANEL_WIDTH - 12
     surface.SetFont("Trebuchet24")
 
+    local virtualSet = {}
     for i = 1, #virtualWeps do
-        local class = virtualWeps[i]
+        virtualSet[virtualWeps[i]] = true
+    end
+
+    local allWeapons = {}
+
+    for i = 1, #virtualWeps do
+        table.insert(allWeapons, {class = virtualWeps[i], isVirtual = true})
+    end
+
+    for i = 1, #realWeapons do
+        local wep = realWeapons[i]
+        if (IsValid(wep)) then
+            local class = wep:GetClass()
+            if (not virtualSet[class]) then
+                table.insert(allWeapons, {class = class, isVirtual = false, entity = wep})
+            end
+        end
+    end
+
+    for i = 1, #allWeapons do
+        local weaponInfo = allWeapons[i]
+        local class = weaponInfo.class
         local wepTable = weapons.Get(class)
 
         local slot, pos, rawName
 
-        if wepTable then
+        if (wepTable) then
             slot = wepTable.Slot and GetSlot(wepTable) or ENGINE_WEAPON_SLOTS[class] or 0
             pos = GetSlotPos(wepTable)
-            if not wepTable.PrintName then continue end
+            if (not wepTable.PrintName) then continue end
             rawName = wepTable.PrintName
         else
             local realWep = ply:GetWeapon(class)
-            if IsValid(realWep) then
+            if (IsValid(realWep)) then
                 slot = realWep:GetSlot()
                 pos = realWep:GetSlotPos()
                 rawName = realWep:GetPrintName()
-                if not rawName then continue end
+                if (not rawName) then continue end
             else
                 slot = ENGINE_WEAPON_SLOTS[class] or 0
                 pos = 0
@@ -182,22 +224,23 @@ local function BuildWeapons(ply)
             text = text,
             lines = lines,
             wrappedH = wrappedH,
-            lineH = lineH
+            lineH = lineH,
+            isVirtual = weaponInfo.isVirtual
         }
 
-        if not cachedSlots[slot] then cachedSlots[slot] = {} end
+        if (not cachedSlots[slot]) then cachedSlots[slot] = {} end
         cachedSlots[slot][#cachedSlots[slot] + 1] = entry
     end
 
     for slot = 0, 9 do
         local slotWeapons = cachedSlots[slot]
-        if slotWeapons and #slotWeapons > 0 then
+        if (slotWeapons and #slotWeapons > 0) then
             table.sort(slotWeapons, function(a, b)
                 return a.pos == b.pos and a.text < b.text or a.pos < b.pos
             end)
 
             for j = 1, #slotWeapons do
-                cachedFlat[#cachedFlat + 1] = { slot = slot, class = slotWeapons[j].class }
+                cachedFlat[#cachedFlat + 1] = { slot = slot, class = slotWeapons[j].class, isVirtual = slotWeapons[j].isVirtual }
             end
             cachedNonEmpty[#cachedNonEmpty + 1] = slot
         end
@@ -209,49 +252,53 @@ end
 
 local function BindSlotToIndex(bind)
     local num = tonumber(string.sub(bind, 5))
-    if not num then return nil end
-    if num == 0 then return 9 end
+    if (not num) then return nil end
+    if (num == 0) then return 9 end
     return math.Clamp(num - 1, 0, 9)
 end
 
 hook.Add("PlayerBindPress", "VirtualWeapons_HandleInput", function(ply, bind, pressed)
-    if not pressed then return end
+    if (not pressed) then
+        return
+    end
 
     local _, flat = BuildWeapons(ply)
-    if not gui.IsGameUIVisible() and not vgui.CursorVisible() then
+    if (not gui.IsGameUIVisible() and not vgui.CursorVisible()) then
         local flatCount = #flat
-        if flatCount == 0 then return end
+        if (flatCount == 0) then
+            return
+        end
 
-        if string.sub(bind, 1, 4) == "slot" then
+        if (string.sub(bind, 1, 4) == "slot") then
             local targetSlot = BindSlotToIndex(bind)
-            if targetSlot then
+            if (targetSlot) then
                 sel.active = true
                 sel.last = CurTime()
 
                 local currentSlot = sel.index and flat[sel.index] and flat[sel.index].slot
                 local found = nil
 
-                if currentSlot == targetSlot then
+                if (currentSlot == targetSlot) then
                     for i = sel.index + 1, flatCount do
-                        if flat[i].slot == targetSlot then
+                        if (flat[i].slot == targetSlot) then
                             found = i
                             break
-                        elseif flat[i].slot ~= targetSlot then
+                        elseif (flat[i].slot != targetSlot) then
                             break
                         end
                     end
                 end
 
-                if not found then
+                if (not found) then
                     for i = 1, flatCount do
-                        if flat[i].slot == targetSlot then
+                        if (flat[i].slot == targetSlot) then
                             found = i
                             break
                         end
                     end
                 end
 
-                if found then
+                if (found) then
                     sel.index = found
                     WS_PlaySound()
                 end
@@ -259,17 +306,29 @@ hook.Add("PlayerBindPress", "VirtualWeapons_HandleInput", function(ply, bind, pr
             end
         end
 
-        if bind == "invnext" or bind == "invprev" then
+        if (bind == "invnext" or bind == "invprev") then
             -- don't interrupt physgun while grabbing
             local activeWep = ply:GetActiveWeapon()
-            if IsValid(activeWep) and activeWep:GetClass() == "weapon_physgun" and input.IsMouseDown(MOUSE_LEFT) then
+            if (IsValid(activeWep) and activeWep:GetClass() == "weapon_physgun" and input.IsMouseDown(MOUSE_LEFT)) then
                 return false
             end
+
+            local wasActive = sel.active
             sel.active = true
             sel.last = CurTime()
-            sel.index = sel.index or 1
 
-            if bind == "invnext" then
+            sel.index = sel.index or 1
+            if (not wasActive and IsValid(activeWep)) then
+                local currentClass = activeWep:GetClass()
+                for i = 1, flatCount do
+                    if (flat[i].class == currentClass) then
+                        sel.index = i
+                        break
+                    end
+                end
+            end
+
+            if (bind == "invnext") then
                 sel.index = sel.index >= flatCount and 1 or sel.index + 1
             else
                 sel.index = sel.index <= 1 and flatCount or sel.index - 1
@@ -278,12 +337,15 @@ hook.Add("PlayerBindPress", "VirtualWeapons_HandleInput", function(ply, bind, pr
             return true
         end
 
-        if bind == "+attack" and sel.active then
-            -- bounds check before accessing flat table
-            if sel.index and sel.index >= 1 and sel.index <= flatCount then
+        if (bind == "+attack" and sel.active) then
+            if (sel.index and sel.index >= 1 and sel.index <= flatCount) then
                 local selectedWeapon = flat[sel.index]
-                if selectedWeapon and selectedWeapon.class then
-                    VirtualWeapons:RequestSwitch(selectedWeapon.class)
+                if (selectedWeapon and selectedWeapon.class) then
+                    if (selectedWeapon.isVirtual) then
+                        VirtualWeapons:RequestSwitch(selectedWeapon.class)
+                    else
+                        RunConsoleCommand("use", selectedWeapon.class)
+                    end
                 end
             end
             sel.active = false
@@ -291,38 +353,43 @@ hook.Add("PlayerBindPress", "VirtualWeapons_HandleInput", function(ply, bind, pr
             return true
         end
 
-        if bind == "lastinv" then
-            local prev = ply:GetPreviousWeapon()
-            if IsValid(prev) and prev ~= NULL then
-                VirtualWeapons:RequestSwitch(prev:GetClass())
-            end
-            return true
+        if (bind == "lastinv") then
+            return false
         end
     end
 end)
 
 hook.Add("HUDPaint", "VirtualWeapons_DrawSelector", function()
-    if not sel.active then return end
+    if (not sel.active) then
+        return
+    end
 
     local curTime = CurTime()
-    if curTime - sel.last > FADE_TIME then
+    if (curTime - sel.last > FADE_TIME) then
         sel.active = false
         return
     end
 
     local ply = LocalPlayer()
-    if not IsValid(ply) then return end
+    if (not IsValid(ply)) then
+        return
+    end
 
     local slots, flat, nonEmpty = BuildWeapons(ply)
     local flatCount = #flat
-    if flatCount == 0 then return end
+    if (flatCount == 0) then
+        return
+    end
 
-    if not sel.index or sel.index > flatCount or sel.index < 1 then
+    if (not sel.index or sel.index > flatCount or sel.index < 1) then
         sel.index = 1
     end
 
     local selectedEntry = flat[sel.index]
-    if not selectedEntry then return end
+    if (not selectedEntry) then
+        return
+    end
+
     local activeSlot = selectedEntry.slot
     local nonEmptyCount = #nonEmpty
 
